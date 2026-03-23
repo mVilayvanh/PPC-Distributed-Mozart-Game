@@ -4,4 +4,4 @@
 
 ## Hierarchy
 
-![Architecture](./docs/architecture.svg)
+![Architecture.svg](img/hierarchy.svg)
