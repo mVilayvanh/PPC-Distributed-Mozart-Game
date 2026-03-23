@@ -18,9 +18,14 @@ object Conductor{
 
 }
 
-class Conductor(provider: ActorRef,player: ActorRef) extends Actor {
+
+
+class Conductor extends Actor {
 import Conductor._
   import context.dispatcher
+
+  val player: ActorRef = context.actorOf(Props[PlayerActor], "Player")
+  val provider: ActorRef = context.actorOf(Props(new Provider), "Provider")
 
   def receive = {
     case StartGame =>
@@ -37,5 +42,4 @@ import Conductor._
   }
 
 }
-
 

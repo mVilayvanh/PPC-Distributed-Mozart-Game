@@ -59,4 +59,3 @@ class PlayerActor () extends Actor{
     }
   }
 }
-

@@ -5,18 +5,16 @@ import akka.pattern.ask
 import akka.util.Timeout
 import upmc.akka.ppc.DataBaseActor._
 
-import scala.concurrent.duration._
 object Provider{
   case class GetMeasure(num:Int);
 }
 
 
-class Provider(dataBaseActor: ActorRef) extends Actor {
+class Provider() extends Actor {
   import Provider._;
-  import context.dispatcher
+  val dataBase: ActorRef = context.actorOf(Props[DataBaseActor], "DataBase")
 
   var measureIndex: Int = 0
-  implicit val timeout: Timeout = 2.seconds;
   val menuetTable = Array(
     Array(96,22,141,41,105,122,11,30,70,121,26,9,112,49,109,14),
     Array(32,6,128,63,146,46,134,81,117,39,126,56,174,18,116,83),
@@ -32,30 +30,19 @@ class Provider(dataBaseActor: ActorRef) extends Actor {
   );
 
   def receive = {
-    case GetMeasure(num) => {
-      val requester = sender
-      println("Provider: received NUMBER: " + num +
-        " at INDEX : " + "ABCDEFGH"(measureIndex%8)+"("+measureIndex+")"+" sending to database")
-      // dataBaseActor.forward(DataBaseActor.GetMeasure(menuetTable(num - 2)(measureIndex) - 1))
-      // on peux aussi utiliser forward
-      // mais dans ce cas conductor recevra la reponse de la base de donnée et pas provider
+    case GetMeasure(num) =>
       val measureId = menuetTable(num - 2)(measureIndex) - 1
-      incrMeasureIndex();
-      // permet de s'assurer garder le même sender que celui qui a envoyé le message à provider
-      val future = dataBaseActor ? DataBaseActor.GetMeasure(measureId)
-      future.mapTo[Measure].foreach { m =>
-        requester ! m
-      }
-    }
+      println("Provider: number " + num ++", index : "+ "ABCDEFGH"(measureIndex%8) + ", measureId : " + measureId)
+      incrMeasureIndex()
+      dataBase ! DataBaseActor.GetMeasure(measureId)
+
+    case measure: Measure =>
+      context.parent ! measure
   }
 
   def incrMeasureIndex(): Unit = {
     measureIndex += 1
-    if(measureIndex>=16){
-      measureIndex=0;
-    }
+    if (measureIndex >= 16) measureIndex = 0
   }
 
-
 }
-
