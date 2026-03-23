@@ -1,5 +1,5 @@
 
-package upmc.akka.mozart
+package upmc.akka.leader
 
 import scala.concurrent.duration._
 import scala.concurrent.ExecutionContext
@@ -13,13 +13,13 @@ import akka.actor.{Props, Actor, ActorRef, ActorSystem}
 
 
 object PdActor {
-  case class PdMidiNote (pitch:Int, at:Int) 
+  case class PdMidiNote (pitch:Int, at:Int)
 }
 
 //////////////////////////////////////////////////
 
 class PdActor (host: String) extends Actor{
- 
+
   import PdActor._
 
   val address = InetAddress.getByName(host)
@@ -35,7 +35,7 @@ class PdActor (host: String) extends Actor{
 
   def pdnote_on (pitch:Int): Unit = {
     val message = "" + pitch
-    val buffer = message.getBytes("UTF-8") 
+    val buffer = message.getBytes("UTF-8")
     val packet = new DatagramPacket(buffer, buffer.length, address, port)
     socket.send(packet)
     socket.send(packet)

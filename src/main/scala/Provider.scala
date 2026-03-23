@@ -1,9 +1,9 @@
-package upmc.akka.ppc
+package upmc.akka.leader
 
 import akka.actor._
 import akka.pattern.ask
 import akka.util.Timeout
-import upmc.akka.ppc.DataBaseActor._
+import upmc.akka.leader.DataBaseActor._
 
 object Provider{
   case class GetMeasure(num:Int);

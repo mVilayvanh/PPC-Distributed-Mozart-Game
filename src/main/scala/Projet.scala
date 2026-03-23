@@ -2,7 +2,7 @@ package upmc.akka.leader
 
 import com.typesafe.config.ConfigFactory
 import akka.actor._
-import Musicien._
+import Musician._
 
 case class Terminal(id: Int, ip: String, port: Int)
 
@@ -37,7 +37,7 @@ object Projet {
 
     val system = ActorSystem("MozartSystem" + id, ConfigFactory.load().getConfig("system" + id))
     val healthMonitor = system.actorOf(Props[HealthMonitor])
-    val musicien = system.actorOf(Props(new Musicien(id, musicienlist, healthMonitor)), "Musicien" + id)
+    val musicien = system.actorOf(Props(new Musician(id, musicienlist, healthMonitor)), "Musician" + id)
     musicien ! Start
   }
 }
