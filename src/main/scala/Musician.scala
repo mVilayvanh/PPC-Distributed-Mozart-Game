@@ -3,10 +3,13 @@ package upmc.akka.leader
 import scala.language.postfixOps
 import akka.actor._
 import akka.util.Timeout
+import upmc.akka.leader.HealthMonitor.{Alive, HowManyMusiciansAreAlive, MusicianCount}
+
 import scala.concurrent.duration._
 import scala.concurrent.ExecutionContext.Implicits.global
 import java.util.concurrent.TimeUnit
 import scala.math.random
+
 
 // Importing necessary classes from other packages
 import upmc.akka.leader.DataBaseActor.Measure
@@ -37,7 +40,12 @@ class Musician(val id: Int, val terminaux: List[Terminal], val monitor: ActorRef
   def receive = {
     case Start =>
       displayActor ! Message("Musician " + this.id + " is created")
-      monitor ! Alive(id)
+      context.system.scheduler.schedule(
+        Duration.Zero,
+        INTERVAL.milliseconds,
+        monitor,
+        Alive(id)
+      )
       if (id == 0) monitor ! HowManyMusiciansAreAlive
       else self ! WaitingToPlay
 
