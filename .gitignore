@@ -1,0 +1,12 @@
+# MACOS specific file
+*.DS_Store
+
+# IDE settings
+.bsp/
+.idea/
+
+# build directories
+project/
+target/
+
+
