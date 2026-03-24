@@ -13,7 +13,7 @@ import akka.actor.{Props, Actor, ActorRef, ActorSystem}
 
 
 object PdActor {
-  case class PdMidiNote (pitch:Int, velocity:Int, dur: Int, at:Int)
+  case class PdMidiNote (pitch: Int, velocity: Int, dur: Int, at: Int)
 }
 
 //////////////////////////////////////////////////
