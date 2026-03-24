@@ -10,14 +10,17 @@ import scala.math.random
 
 object Musician {
   case object Start
+
   case object Play
 
   // Messages sent between remote musicians
   case class Heartbeat(id: Int)
+
   case class PlayMeasure(measure: Measure)
 
   // Internal scheduling messages
   case object SendHeartbeats
+
   case object CheckHealth
 
   def runtwoDice(): Int = {
@@ -28,19 +31,20 @@ object Musician {
 }
 
 class Musician(val id: Int, val terminaux: List[Terminal], val monitor: ActorRef) extends Actor {
+
   import Musician._
 
   val displayActor: ActorRef = context.actorOf(Props[DisplayActor], name = "displayActor")
   val provider: ActorRef = context.actorOf(Props(new Provider()), "Provider")
 
-val OCTAVE_SHIFT = 12
-// player type attribution
-val player: ActorRef = id match {
-  case 1 => context.actorOf(Props(new PlayerActor()), "Player")
-  case 2 => context.actorOf(Props(new PlayerActor(p => p + OCTAVE_SHIFT)), "Player")
-  case 3 => context.actorOf(Props(new PdActor("127.0.0.1")), "Player")
-  case _ => context.actorOf(Props(new PlayerActor()), "Player")
-}
+  val OCTAVE_SHIFT = 12
+  // player type attribution
+  val player: ActorRef = id match {
+    case 1 => context.actorOf(Props(new PlayerActor()), "Player")
+    case 2 => context.actorOf(Props(new PlayerActor(p => p + OCTAVE_SHIFT)), "Player")
+    case 3 => context.actorOf(Props(new PdActor("127.0.0.1")), "Player")
+    case _ => context.actorOf(Props(new PlayerActor()), "Player")
+  }
 
   // Timing constants
   val HEARTBEAT_INTERVAL = 1.second
@@ -99,8 +103,8 @@ val player: ActorRef = id match {
 
   private def checkLeaderElection(): Unit = {
     if (!isConductor &&
-        knownMusicians.contains(currentConductorId) &&
-        !aliveOthers.contains(currentConductorId)) {
+      knownMusicians.contains(currentConductorId) &&
+      !aliveOthers.contains(currentConductorId)) {
       // Current conductor is dead, elect new one (lowest alive ID)
       val candidates = (aliveOthers :+ id).sorted
       val newConductor = candidates.head
@@ -179,8 +183,8 @@ val player: ActorRef = id match {
         }
       }
 
-    case Play        => // ignore (stale schedule from previous state)
-    case _: Measure  => // ignore
+    case Play => // ignore (stale schedule from previous state)
+    case _: Measure => // ignore
     case _: PlayMeasure => // ignore
   }
 
@@ -239,7 +243,7 @@ val player: ActorRef = id match {
       displayActor ! Message(s"Musician $id: Playing a measure!")
       player ! measure
 
-    case Play      => // ignore
+    case Play => // ignore
     case _: Measure => // ignore
   }
 }

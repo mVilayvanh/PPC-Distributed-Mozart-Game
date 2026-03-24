@@ -5,24 +5,29 @@ import scala.concurrent.duration._
 
 object HealthMonitor {
   final case class Alive(id: Int)
+
   final case class RegisterMusician(id: Int)
+
   final case class UnregisterMusician(id: Int)
 
   case object HowManyMusiciansAreAlive
+
   final case class MusicianCount(n: Int)
 
   case object WhoIsAlive
+
   final case class AliveMusicians(ids: List[Int])
 
   private case object UpdateMusiciansHealth
 
   final case class MusicianHealth(
-    isAlive: Boolean,
-    missedPings: Int
-  )
+                                   isAlive: Boolean,
+                                   missedPings: Int
+                                 )
 }
 
 class HealthMonitor extends Actor {
+
   import HealthMonitor._
   import context.dispatcher
 
