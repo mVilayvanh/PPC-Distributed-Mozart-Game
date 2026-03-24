@@ -43,7 +43,7 @@ class PlayerActor () extends Actor{
 
   def receive = {
     case Measure (l:List[Chord]) => {
-      println("Player : received measure")
+      println("Player : received measure (normal mode)")
       l.foreach( n => {
         n.notes.foreach(note => {
           self ! MidiNote(note.pitch, note.vol, note.dur, n.date)
@@ -51,6 +51,32 @@ class PlayerActor () extends Actor{
         )
 
 
+      })
+    }
+    case MidiNote(p,v, d, at) => {
+      context.system.scheduler.scheduleOnce ((at) milliseconds) (note_on (p,v,10))
+      context.system.scheduler.scheduleOnce ((at+d) milliseconds) (note_off (p,10))
+    }
+  }
+}
+
+//////////////////////////////////////////////////
+// Mode 2 : transposition d'une octave (+12 demi-tons)
+
+class OctavePlayerActor () extends Actor{
+  import DataBaseActor._
+  import PlayerActor._
+
+  val OCTAVE_SHIFT = 12
+
+  def receive = {
+    case Measure (l:List[Chord]) => {
+      println("Player : received measure (octave transposition mode)")
+      l.foreach( n => {
+        n.notes.foreach(note => {
+          val transposedPitch = math.min(note.pitch + OCTAVE_SHIFT, 127)
+          self ! MidiNote(transposedPitch, note.vol, note.dur, n.date)
+        })
       })
     }
     case MidiNote(p,v, d, at) => {

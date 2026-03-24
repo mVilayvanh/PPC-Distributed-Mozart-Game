@@ -31,8 +31,16 @@ class Musician(val id: Int, val terminaux: List[Terminal], val monitor: ActorRef
   import Musician._
 
   val displayActor: ActorRef = context.actorOf(Props[DisplayActor], name = "displayActor")
-  val player: ActorRef = context.actorOf(Props(new PlayerActor()), "Player")
   val provider: ActorRef = context.actorOf(Props(new Provider()), "Provider")
+
+  // Each musician plays differently:
+  //   1 -> normal, 2 -> octave transposition, 3 -> Pure Data
+  val player: ActorRef = id match {
+    case 1 => context.actorOf(Props(new PlayerActor()), "Player")
+    case 2 => context.actorOf(Props(new OctavePlayerActor()), "Player")
+    case 3 => context.actorOf(Props(new PdActor("127.0.0.1")), "Player")
+    case _ => context.actorOf(Props(new PlayerActor()), "Player") // default
+  }
 
   // Timing constants
   val HEARTBEAT_INTERVAL = 1.second
