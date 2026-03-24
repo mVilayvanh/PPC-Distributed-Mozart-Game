@@ -11,6 +11,9 @@ object HealthMonitor {
   case object HowManyMusiciansAreAlive
   final case class MusicianCount(n: Int)
 
+  case object WhoIsAlive
+  final case class AliveMusicians(ids: List[Int])
+
   private case object UpdateMusiciansHealth
 
   final case class MusicianHealth(
@@ -63,6 +66,9 @@ class HealthMonitor extends Actor {
 
     case HowManyMusiciansAreAlive =>
       sender() ! MusicianCount(musicians.values.count(_.isAlive))
+
+    case WhoIsAlive =>
+      sender() ! AliveMusicians(musicians.filter(_._2.isAlive).keys.toList.sorted)
 
     case UpdateMusiciansHealth =>
       musicians = musicians.map { case (id, musicianHealth) =>
