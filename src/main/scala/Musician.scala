@@ -14,7 +14,8 @@ object Musician {
   case object Play
 
   // Messages sent between remote musicians
-  case class Heartbeat(id: Int)
+  // conductorId = -1 means "no conductor known yet"
+  case class Heartbeat(id: Int, conductorId: Int)
 
   case class PlayMeasure(measure: Measure)
 
@@ -22,6 +23,9 @@ object Musician {
   case object SendHeartbeats
 
   case object CheckHealth
+
+  // Delayed self-check: become conductor only if no one else has claimed the role
+  case object ConductorCheck
 
   def runtwoDice(): Int = {
     val dice1 = (random * 6).toInt + 1
@@ -53,14 +57,17 @@ class Musician(val id: Int, val terminaux: List[Terminal], val monitor: ActorRef
   val MAX_WAIT_SECONDS = 30
   val MAX_MISSED_PINGS = 5
 
+  // How long to wait for existing conductor heartbeats before claiming the role
+  val CONDUCTOR_CHECK_DELAY = 3.seconds
+
   // Peer health tracking: id -> missed heartbeat count
   private var peerHealth: Map[Int, Int] = Map.empty
   // Musicians we've ever heard from (for leader election)
   private var knownMusicians: Set[Int] = Set.empty
 
-  // State
+  // State — -1 means "no conductor known yet"
   private var isConductor: Boolean = false
-  private var currentConductorId: Int = 0
+  private var currentConductorId: Int = -1
   private var waitingSeconds: Int = 0
   private var roundRobinIndex: Int = 0
 
@@ -96,23 +103,32 @@ class Musician(val id: Int, val terminaux: List[Terminal], val monitor: ActorRef
     }
   }
 
-  private def handleHeartbeat(fromId: Int): Unit = {
+  // Update peer health and learn conductor from the sender's point of view.
+  private def handleHeartbeat(fromId: Int, reportedConductorId: Int): Unit = {
     peerHealth = peerHealth.updated(fromId, 0)
     knownMusicians += fromId
+    // Accept the reported conductor only if we don't know one yet
+    if (currentConductorId == -1 && reportedConductorId >= 0) {
+      currentConductorId = reportedConductorId
+      displayActor ! Message(s"Musician $id: Learned that Musician $reportedConductorId is conductor")
+    }
   }
 
   private def checkLeaderElection(): Unit = {
-    if (!isConductor &&
-      knownMusicians.contains(currentConductorId) &&
-      !aliveOthers.contains(currentConductorId)) {
-      // Current conductor is dead, elect new one (lowest alive ID)
-      val candidates = (aliveOthers :+ id).sorted
-      val newConductor = candidates.head
-      currentConductorId = newConductor
-      if (newConductor == id) {
-        becomeConductor()
-      } else {
-        displayActor ! Message(s"Musician $id: Musician $newConductor is the new conductor")
+    if (!isConductor) {
+      val conductorKnownAndDead =
+        currentConductorId >= 0 &&
+          knownMusicians.contains(currentConductorId) &&
+          !aliveOthers.contains(currentConductorId)
+      if (conductorKnownAndDead) {
+        val candidates = (aliveOthers :+ id).sorted
+        val newConductor = candidates.head
+        currentConductorId = newConductor
+        if (newConductor == id) {
+          becomeConductor()
+        } else {
+          displayActor ! Message(s"Musician $id: Musician $newConductor is the new conductor")
+        }
       }
     }
   }
@@ -140,31 +156,30 @@ class Musician(val id: Int, val terminaux: List[Terminal], val monitor: ActorRef
     case Start =>
       displayActor ! Message(s"Musician $id is created")
 
-      // Start broadcasting heartbeats to all remote musicians
       heartbeatTask = Some(context.system.scheduler.schedule(
         Duration.Zero, HEARTBEAT_INTERVAL, self, SendHeartbeats
       ))
 
-      // Start periodic health checking
       healthCheckTask = Some(context.system.scheduler.schedule(
         2.seconds, HEALTH_CHECK_INTERVAL, self, CheckHealth
       ))
 
-      if (id == 0) {
-        becomeConductor()
-      } else {
-        displayActor ! Message(s"Musician $id: Waiting for the conductor...")
-        context.become(musicianBehavior)
-      }
+      // All musicians (including id=0) enter musicianBehavior and wait
+      // CONDUCTOR_CHECK_DELAY before claiming conductor. During this window,
+      // heartbeats from an already-running conductor propagate conductorId,
+      // preventing a restarted musician 0 from creating a duplicate conductor.
+      context.system.scheduler.scheduleOnce(CONDUCTOR_CHECK_DELAY, self, ConductorCheck)
+      displayActor ! Message(s"Musician $id: Waiting for conductor discovery...")
+      context.become(musicianBehavior)
   }
 
   // --- Conductor: waiting for at least 1 musician ---
   def conductorWaiting: Receive = {
     case SendHeartbeats =>
-      remoteMusicians.values.foreach(_ ! Heartbeat(id))
+      remoteMusicians.values.foreach(_ ! Heartbeat(id, currentConductorId))
 
-    case Heartbeat(fromId) =>
-      handleHeartbeat(fromId)
+    case Heartbeat(fromId, reportedConductorId) =>
+      handleHeartbeat(fromId, reportedConductorId)
 
     case CheckHealth =>
       updateHealth()
@@ -183,6 +198,7 @@ class Musician(val id: Int, val terminaux: List[Terminal], val monitor: ActorRef
         }
       }
 
+    case ConductorCheck => // already conductor, ignore
     case Play => // ignore (stale schedule from previous state)
     case _: Measure => // ignore
     case _: PlayMeasure => // ignore
@@ -191,10 +207,10 @@ class Musician(val id: Int, val terminaux: List[Terminal], val monitor: ActorRef
   // --- Conductor: actively dispatching measures ---
   def conductorPlaying: Receive = {
     case SendHeartbeats =>
-      remoteMusicians.values.foreach(_ ! Heartbeat(id))
+      remoteMusicians.values.foreach(_ ! Heartbeat(id, currentConductorId))
 
-    case Heartbeat(fromId) =>
-      handleHeartbeat(fromId)
+    case Heartbeat(fromId, reportedConductorId) =>
+      handleHeartbeat(fromId, reportedConductorId)
 
     case CheckHealth =>
       updateHealth()
@@ -206,14 +222,12 @@ class Musician(val id: Int, val terminaux: List[Terminal], val monitor: ActorRef
         displayActor ! Message(s"Conductor $id: Rolled dice = $num")
         provider ! Provider.GetMeasure(num)
       } else {
-        // All musicians left, go back to waiting
         displayActor ! Message(s"Conductor $id: All musicians left! Waiting for new ones...")
         waitingSeconds = 0
         context.become(conductorWaiting)
       }
 
     case measure: Measure =>
-      // Received from Provider -> dispatch to next alive musician (round-robin)
       val others = aliveOthers
       if (others.nonEmpty) {
         val targetId = others(roundRobinIndex % others.size)
@@ -221,23 +235,38 @@ class Musician(val id: Int, val terminaux: List[Terminal], val monitor: ActorRef
         displayActor ! Message(s"Conductor $id: Sending measure to Musician $targetId")
         remoteMusicians.get(targetId).foreach(_ ! PlayMeasure(measure))
       }
-      // Schedule next play
       context.system.scheduler.scheduleOnce(PLAY_INTERVAL, self, Play)
 
+    case ConductorCheck => // already conductor, ignore
     case _: PlayMeasure => // ignore
   }
 
   // --- Regular musician: receives and plays measures ---
   def musicianBehavior: Receive = {
     case SendHeartbeats =>
-      remoteMusicians.values.foreach(_ ! Heartbeat(id))
+      remoteMusicians.values.foreach(_ ! Heartbeat(id, currentConductorId))
 
-    case Heartbeat(fromId) =>
-      handleHeartbeat(fromId)
+    case Heartbeat(fromId, reportedConductorId) =>
+      handleHeartbeat(fromId, reportedConductorId)
 
     case CheckHealth =>
       updateHealth()
       checkLeaderElection()
+
+    case ConductorCheck =>
+      // No conductor discovered during the startup window: elect the lowest
+      // alive ID (or self if alone).
+      if (currentConductorId == -1) {
+        val candidates = (aliveOthers :+ id).sorted
+        val newConductor = candidates.head
+        currentConductorId = newConductor
+        if (newConductor == id) {
+          displayActor ! Message(s"Musician $id: No conductor found after ${CONDUCTOR_CHECK_DELAY.toSeconds}s, becoming conductor.")
+          becomeConductor()
+        } else {
+          displayActor ! Message(s"Musician $id: No conductor found, Musician $newConductor should be conductor")
+        }
+      }
 
     case PlayMeasure(measure) =>
       displayActor ! Message(s"Musician $id: Playing a measure!")
