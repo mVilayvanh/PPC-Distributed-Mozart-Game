@@ -28,9 +28,10 @@ object Projet {
     // recuperation des adresses de tous les musiciens
     // hardcoded path name
     for (i <- 3 to 0 by -1) {
-      val address = ConfigFactory.load().getConfig("system" + i).getValue("akka.remote.netty.tcp.hostname").render()
-      val port = ConfigFactory.load().getConfig("system" + i).getValue("akka.remote.netty.tcp.port").render()
-      musicienlist = Terminal(i, address, port.toInt) :: musicienlist
+      val config = ConfigFactory.load().getConfig("system" + i)
+      val address = config.getString("akka.remote.netty.tcp.hostname")
+      val port = config.getInt("akka.remote.netty.tcp.port")
+      musicienlist = Terminal(i, address, port) :: musicienlist
     }
 
     println(musicienlist)
