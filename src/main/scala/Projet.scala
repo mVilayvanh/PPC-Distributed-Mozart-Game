@@ -37,8 +37,7 @@ object Projet {
     println(musicienlist)
 
     val system = ActorSystem("MozartSystem" + id, ConfigFactory.load().getConfig("system" + id))
-    val healthMonitor = system.actorOf(Props[HealthMonitor])
-    val musicien = system.actorOf(Props(new Musician(id, musicienlist, healthMonitor)), "Musician" + id)
+    val musicien = system.actorOf(Props(new Musician(id, musicienlist)), "Musician" + id)
     musicien ! Start
   }
 }

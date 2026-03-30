@@ -34,7 +34,7 @@ object Musician {
   }
 }
 
-class Musician(val id: Int, val terminaux: List[Terminal], val monitor: ActorRef) extends Actor {
+class Musician(val id: Int, val terminaux: List[Terminal]) extends Actor {
 
   import Musician._
 
