@@ -10,21 +10,11 @@ import scala.math.random
 
 object Musician {
   case object Start
-
   case object Play
-
-  // Messages sent between remote musicians
-  // conductorId = -1 means "no conductor known yet"
   case class Heartbeat(id: Int, conductorId: Int)
-
   case class PlayMeasure(measure: Measure)
-
-  // Internal scheduling messages
   case object SendHeartbeats
-
   case object CheckHealth
-
-  // Delayed self-check: become conductor only if no one else has claimed the role
   case object ConductorCheck
 
   def runtwoDice(): Int = {
@@ -42,7 +32,6 @@ class Musician(val id: Int, val terminaux: List[Terminal]) extends Actor {
   val provider: ActorRef = context.actorOf(Props(new Provider()), "Provider")
 
   val OCTAVE_SHIFT = 12
-  // player type attribution
   val player: ActorRef = id match {
     case 1 => context.actorOf(Props(new PlayerActor()), "Player")
     case 2 => context.actorOf(Props(new PlayerActor(p => p + OCTAVE_SHIFT)), "Player")
@@ -50,37 +39,26 @@ class Musician(val id: Int, val terminaux: List[Terminal]) extends Actor {
     case _ => context.actorOf(Props(new PlayerActor()), "Player")
   }
 
-  // Timing constants
   val HEARTBEAT_INTERVAL = 1.second
   val HEALTH_CHECK_INTERVAL = 2.seconds
   val PLAY_INTERVAL = 1800.milliseconds
   val MAX_WAIT_SECONDS = 30
   val MAX_MISSED_PINGS = 5
-
-  // How long to wait for existing conductor heartbeats before claiming the role.
-  // Staggered by id: lower IDs check first, higher IDs wait longer.
-  // This ensures the lowest-ID musician becomes conductor before others check.
   val CONDUCTOR_CHECK_DELAY = (3 + id * 2).seconds
 
-  // Peer health tracking: id -> missed heartbeat count
   private var peerHealth: Map[Int, Int] = Map.empty
-  // Musicians we've ever heard from (for leader election)
   private var knownMusicians: Set[Int] = Set.empty
 
-  // State — -1 means "no conductor known yet"
   private var isConductor: Boolean = false
   private var currentConductorId: Int = -1
   private var waitingSeconds: Int = 0
-  private var roundRobinIndex: Int = 0
 
-  // Scheduled tasks
   private var heartbeatTask: Option[Cancellable] = None
   private var healthCheckTask: Option[Cancellable] = None
 
-  // Remote actor selections for all other musicians
   private lazy val remoteMusicians: Map[Int, ActorSelection] = {
     terminaux.filterNot(_.id == id).map { t =>
-      val ip = t.ip.replace("\"", "") // strip quotes from config render()
+      val ip = t.ip.replace("\"", "")
       t.id -> context.actorSelection(
         s"akka.tcp://MozartSystem${t.id}@$ip:${t.port}/user/Musician${t.id}"
       )
@@ -91,8 +69,6 @@ class Musician(val id: Int, val terminaux: List[Terminal]) extends Actor {
     heartbeatTask.foreach(_.cancel())
     healthCheckTask.foreach(_.cancel())
   }
-
-  // === Helpers ===
 
   private def aliveOthers: List[Int] = peerHealth.keys.toList.sorted
 
@@ -105,20 +81,16 @@ class Musician(val id: Int, val terminaux: List[Terminal]) extends Actor {
     }
   }
 
-  // Update peer health and learn conductor from the sender's point of view.
   private def handleHeartbeat(fromId: Int, reportedConductorId: Int): Unit = {
     peerHealth = peerHealth.updated(fromId, 0)
     knownMusicians += fromId
 
-    if (reportedConductorId < 0) return // sender doesn't know a conductor yet
+    if (reportedConductorId < 0) return
 
     if (currentConductorId == -1) {
-      // No conductor known yet — accept the reported one
       currentConductorId = reportedConductorId
       displayActor ! Message(s"Musician $id: Learned that Musician $reportedConductorId is conductor")
     } else if (isConductor && reportedConductorId != id && reportedConductorId < id) {
-      // Split-brain: we are conductor but a lower-ID node is also conductor.
-      // Only yield if the reported conductor is actually alive (not stale info).
       if (reportedConductorId == fromId || aliveOthers.contains(reportedConductorId)) {
         isConductor = false
         currentConductorId = reportedConductorId
@@ -126,8 +98,6 @@ class Musician(val id: Int, val terminaux: List[Terminal]) extends Actor {
         context.become(musicianBehavior)
       }
     } else if (!isConductor && reportedConductorId != currentConductorId) {
-      // Not conductor ourselves, but heard about a different conductor — adopt it
-      // (e.g. conductor changed while we had stale info)
       currentConductorId = reportedConductorId
       displayActor ! Message(s"Musician $id: Updated conductor to Musician $reportedConductorId")
     }
@@ -168,9 +138,6 @@ class Musician(val id: Int, val terminaux: List[Terminal]) extends Actor {
     }
   }
 
-  // === BEHAVIORS ===
-
-  // --- Initial: handle Start ---
   def receive: Receive = {
     case Start =>
       displayActor ! Message(s"Musician $id is created")
@@ -183,16 +150,11 @@ class Musician(val id: Int, val terminaux: List[Terminal]) extends Actor {
         2.seconds, HEALTH_CHECK_INTERVAL, self, CheckHealth
       ))
 
-      // All musicians (including id=0) enter musicianBehavior and wait
-      // CONDUCTOR_CHECK_DELAY before claiming conductor. During this window,
-      // heartbeats from an already-running conductor propagate conductorId,
-      // preventing a restarted musician 0 from creating a duplicate conductor.
       context.system.scheduler.scheduleOnce(CONDUCTOR_CHECK_DELAY, self, ConductorCheck)
       displayActor ! Message(s"Musician $id: Waiting for conductor discovery...")
       context.become(musicianBehavior)
   }
 
-  // --- Conductor: waiting for at least 1 musician ---
   def conductorWaiting: Receive = {
     case SendHeartbeats =>
       remoteMusicians.values.foreach(_ ! Heartbeat(id, currentConductorId))
@@ -217,13 +179,12 @@ class Musician(val id: Int, val terminaux: List[Terminal]) extends Actor {
         }
       }
 
-    case ConductorCheck => // already conductor, ignore
-    case Play => // ignore (stale schedule from previous state)
-    case _: Measure => // ignore
-    case _: PlayMeasure => // ignore
+    case ConductorCheck =>
+    case Play =>
+    case _: Measure =>
+    case _: PlayMeasure =>
   }
 
-  // --- Conductor: actively dispatching measures ---
   def conductorPlaying: Receive = {
     case SendHeartbeats =>
       remoteMusicians.values.foreach(_ ! Heartbeat(id, currentConductorId))
@@ -248,19 +209,16 @@ class Musician(val id: Int, val terminaux: List[Terminal]) extends Actor {
 
     case measure: Measure =>
       val others = aliveOthers
-      if (others.nonEmpty) {
-        val targetId = others(roundRobinIndex % others.size)
-        roundRobinIndex += 1
+      others.foreach { targetId =>
         displayActor ! Message(s"Conductor $id: Sending measure to Musician $targetId")
         remoteMusicians.get(targetId).foreach(_ ! PlayMeasure(measure))
       }
       context.system.scheduler.scheduleOnce(PLAY_INTERVAL, self, Play)
 
-    case ConductorCheck => // already conductor, ignore
-    case _: PlayMeasure => // ignore
+    case ConductorCheck =>
+    case _: PlayMeasure =>
   }
 
-  // --- Regular musician: receives and plays measures ---
   def musicianBehavior: Receive = {
     case SendHeartbeats =>
       remoteMusicians.values.foreach(_ ! Heartbeat(id, currentConductorId))
@@ -273,8 +231,6 @@ class Musician(val id: Int, val terminaux: List[Terminal]) extends Actor {
       checkLeaderElection()
 
     case ConductorCheck =>
-      // No conductor discovered during the startup window: elect the lowest
-      // alive ID (or self if alone).
       if (currentConductorId == -1) {
         val candidates = (aliveOthers :+ id).sorted
         val newConductor = candidates.head
@@ -291,7 +247,7 @@ class Musician(val id: Int, val terminaux: List[Terminal]) extends Actor {
       displayActor ! Message(s"Musician $id: Playing a measure!")
       player ! measure
 
-    case Play => // ignore
-    case _: Measure => // ignore
+    case Play =>
+    case _: Measure =>
   }
 }
