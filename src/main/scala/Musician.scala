@@ -57,8 +57,10 @@ class Musician(val id: Int, val terminaux: List[Terminal]) extends Actor {
   val MAX_WAIT_SECONDS = 30
   val MAX_MISSED_PINGS = 5
 
-  // How long to wait for existing conductor heartbeats before claiming the role
-  val CONDUCTOR_CHECK_DELAY = 3.seconds
+  // How long to wait for existing conductor heartbeats before claiming the role.
+  // Staggered by id: lower IDs check first, higher IDs wait longer.
+  // This ensures the lowest-ID musician becomes conductor before others check.
+  val CONDUCTOR_CHECK_DELAY = (3 + id * 2).seconds
 
   // Peer health tracking: id -> missed heartbeat count
   private var peerHealth: Map[Int, Int] = Map.empty
@@ -107,17 +109,27 @@ class Musician(val id: Int, val terminaux: List[Terminal]) extends Actor {
   private def handleHeartbeat(fromId: Int, reportedConductorId: Int): Unit = {
     peerHealth = peerHealth.updated(fromId, 0)
     knownMusicians += fromId
-    if (currentConductorId == -1 && reportedConductorId >= 0) {
+
+    if (reportedConductorId < 0) return // sender doesn't know a conductor yet
+
+    if (currentConductorId == -1) {
       // No conductor known yet — accept the reported one
       currentConductorId = reportedConductorId
       displayActor ! Message(s"Musician $id: Learned that Musician $reportedConductorId is conductor")
-    } else if (isConductor && reportedConductorId >= 0 && reportedConductorId < id) {
+    } else if (isConductor && reportedConductorId != id && reportedConductorId < id) {
       // Split-brain: we are conductor but a lower-ID node is also conductor.
-      // Lower ID always wins — yield.
-      isConductor = false
+      // Only yield if the reported conductor is actually alive (not stale info).
+      if (reportedConductorId == fromId || aliveOthers.contains(reportedConductorId)) {
+        isConductor = false
+        currentConductorId = reportedConductorId
+        displayActor ! Message(s"Musician $id: Yielding conductorship to Musician $reportedConductorId (lower ID wins)")
+        context.become(musicianBehavior)
+      }
+    } else if (!isConductor && reportedConductorId != currentConductorId) {
+      // Not conductor ourselves, but heard about a different conductor — adopt it
+      // (e.g. conductor changed while we had stale info)
       currentConductorId = reportedConductorId
-      displayActor ! Message(s"Musician $id: Yielding conductorship to Musician $reportedConductorId (lower ID wins)")
-      context.become(musicianBehavior)
+      displayActor ! Message(s"Musician $id: Updated conductor to Musician $reportedConductorId")
     }
   }
 
