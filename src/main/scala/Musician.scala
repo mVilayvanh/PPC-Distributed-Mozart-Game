@@ -107,10 +107,17 @@ class Musician(val id: Int, val terminaux: List[Terminal]) extends Actor {
   private def handleHeartbeat(fromId: Int, reportedConductorId: Int): Unit = {
     peerHealth = peerHealth.updated(fromId, 0)
     knownMusicians += fromId
-    // Accept the reported conductor only if we don't know one yet
     if (currentConductorId == -1 && reportedConductorId >= 0) {
+      // No conductor known yet — accept the reported one
       currentConductorId = reportedConductorId
       displayActor ! Message(s"Musician $id: Learned that Musician $reportedConductorId is conductor")
+    } else if (isConductor && reportedConductorId >= 0 && reportedConductorId < id) {
+      // Split-brain: we are conductor but a lower-ID node is also conductor.
+      // Lower ID always wins — yield.
+      isConductor = false
+      currentConductorId = reportedConductorId
+      displayActor ! Message(s"Musician $id: Yielding conductorship to Musician $reportedConductorId (lower ID wins)")
+      context.become(musicianBehavior)
     }
   }
 
