@@ -25,7 +25,6 @@ object Musician {
 }
 
 class Musician(val id: Int, val terminaux: List[Terminal]) extends Actor {
-
   import Musician._
 
   val displayActor: ActorRef = context.actorOf(Props[DisplayActor], name = "displayActor")
@@ -50,7 +49,7 @@ class Musician(val id: Int, val terminaux: List[Terminal]) extends Actor {
   private var knownMusicians: Set[Int] = Set.empty
 
   private var isConductor: Boolean = false
-  private var currentConductorId: Int = -1
+  private var currentConductorId: Int = 0
   private var waitingSeconds: Int = 0
 
   private var heartbeatTask: Option[Cancellable] = None
@@ -104,20 +103,17 @@ class Musician(val id: Int, val terminaux: List[Terminal]) extends Actor {
   }
 
   private def checkLeaderElection(): Unit = {
-    if (!isConductor) {
-      val conductorKnownAndDead =
-        currentConductorId >= 0 &&
-          knownMusicians.contains(currentConductorId) &&
-          !aliveOthers.contains(currentConductorId)
-      if (conductorKnownAndDead) {
-        val candidates = (aliveOthers :+ id).sorted
-        val newConductor = candidates.head
-        currentConductorId = newConductor
-        if (newConductor == id) {
-          becomeConductor()
-        } else {
-          displayActor ! Message(s"Musician $id: Musician $newConductor is the new conductor")
-        }
+    if (!isConductor &&
+      knownMusicians.contains(currentConductorId) &&
+      !aliveOthers.contains(currentConductorId)) {
+      // Current conductor is dead, elect new one (lowest alive ID)
+      val candidates = (aliveOthers :+ id).sorted
+      val newConductor = candidates.head
+      currentConductorId = newConductor
+      if (newConductor == id) {
+        becomeConductor()
+      } else {
+        displayActor ! Message(s"Musician $id: Musician $newConductor is the new conductor")
       }
     }
   }
@@ -142,10 +138,12 @@ class Musician(val id: Int, val terminaux: List[Terminal]) extends Actor {
     case Start =>
       displayActor ! Message(s"Musician $id is created")
 
+      // Start broadcasting heartbeats to all remote musicians
       heartbeatTask = Some(context.system.scheduler.schedule(
         Duration.Zero, HEARTBEAT_INTERVAL, self, SendHeartbeats
       ))
 
+      // Start periodic health checking
       healthCheckTask = Some(context.system.scheduler.schedule(
         2.seconds, HEALTH_CHECK_INTERVAL, self, CheckHealth
       ))
@@ -157,10 +155,10 @@ class Musician(val id: Int, val terminaux: List[Terminal]) extends Actor {
 
   def conductorWaiting: Receive = {
     case SendHeartbeats =>
-      remoteMusicians.values.foreach(_ ! Heartbeat(id, currentConductorId))
+      remoteMusicians.values.foreach(_ ! Heartbeat(id))
 
-    case Heartbeat(fromId, reportedConductorId) =>
-      handleHeartbeat(fromId, reportedConductorId)
+    case Heartbeat(fromId) =>
+      handleHeartbeat(fromId)
 
     case CheckHealth =>
       updateHealth()
@@ -187,10 +185,10 @@ class Musician(val id: Int, val terminaux: List[Terminal]) extends Actor {
 
   def conductorPlaying: Receive = {
     case SendHeartbeats =>
-      remoteMusicians.values.foreach(_ ! Heartbeat(id, currentConductorId))
+      remoteMusicians.values.foreach(_ ! Heartbeat(id))
 
-    case Heartbeat(fromId, reportedConductorId) =>
-      handleHeartbeat(fromId, reportedConductorId)
+    case Heartbeat(fromId) =>
+      handleHeartbeat(fromId)
 
     case CheckHealth =>
       updateHealth()
@@ -202,17 +200,20 @@ class Musician(val id: Int, val terminaux: List[Terminal]) extends Actor {
         displayActor ! Message(s"Conductor $id: Rolled dice = $num")
         provider ! Provider.GetMeasure(num)
       } else {
+        // All musicians left, go back to waiting
         displayActor ! Message(s"Conductor $id: All musicians left! Waiting for new ones...")
         waitingSeconds = 0
         context.become(conductorWaiting)
       }
 
     case measure: Measure =>
+      // Received from Provider -> dispatch to next alive musician (round-robin)
       val others = aliveOthers
       others.foreach { targetId =>
         displayActor ! Message(s"Conductor $id: Sending measure to Musician $targetId")
         remoteMusicians.get(targetId).foreach(_ ! PlayMeasure(measure))
       }
+      // Schedule next play
       context.system.scheduler.scheduleOnce(PLAY_INTERVAL, self, Play)
 
     case ConductorCheck =>
@@ -221,10 +222,10 @@ class Musician(val id: Int, val terminaux: List[Terminal]) extends Actor {
 
   def musicianBehavior: Receive = {
     case SendHeartbeats =>
-      remoteMusicians.values.foreach(_ ! Heartbeat(id, currentConductorId))
+      remoteMusicians.values.foreach(_ ! Heartbeat(id))
 
-    case Heartbeat(fromId, reportedConductorId) =>
-      handleHeartbeat(fromId, reportedConductorId)
+    case Heartbeat(fromId) =>
+      handleHeartbeat(fromId)
 
     case CheckHealth =>
       updateHealth()
